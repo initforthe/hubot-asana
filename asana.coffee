@@ -12,8 +12,8 @@ url  = 'https://app.asana.com/api/1.0'
 
 workspace = "WORKSPACE_ID"
 project = "PROJECT_ID"
-user = "xxxxx.xxxxxxxxxxxxxxx"
-pass = ""
+user = "YOUR_API_KEY"
+pass = "YOUR_PASSWORD"
 
 getRequest = (msg, path, callback) ->
   auth = 'Basic ' + new Buffer("#{user}:#{pass}").toString('base64')
@@ -33,8 +33,9 @@ postRequest = (msg, path, params, callback) ->
 addTask = (msg, taskName, path, params, userAcct) ->
   postRequest msg, '/tasks', params, (err, res, body) ->
     response = JSON.parse body
-    if response.data.errors
-      msg.send response.data.errors
+    if response.errors
+      for error in response.errors
+        msg.send error.message
     else
       projectId = response.data.id
       params = {data:{project: "#{project}"}}
@@ -42,7 +43,7 @@ addTask = (msg, taskName, path, params, userAcct) ->
         response = JSON.parse body
         if response.data
           if userAcct
-            msg.send "Task Created : #{taskName} : Assigned to @#{userAcct}"
+            msg.send "Task Created : #{taskName} : Assigned to #{userAcct}"
           else
             msg.send "Task Created : #{taskName}"
         else
@@ -55,21 +56,13 @@ module.exports = (robot) ->
     userAcct = msg.match[2] if msg.match[2] != undefined
     params = {data:{name: "#{taskName}", workspace: "#{workspace}"}}
     if userAcct
-      userAcct = userAcct.replace /^\s+|\s+$/g, ""
-      userAcct = userAcct.replace "@", ""
-      getRequest msg, "/workspaces/#{workspace}/users", (err, res, body) ->
-        response = JSON.parse body
-        assignedUser = ""
-        for user in response.data
-          name = user.name.toLowerCase().split " "
-          if userAcct == name[0] || userAcct == name[1]
-            assignedUser = user.id
-        if assignedUser != ""
-          params = {data:{name: "#{taskName}", workspace: "#{workspace}", assignee: "#{assignedUser}"}}
-          addTask msg, taskName, '/tasks', params, userAcct
-        else
-          msg.send "Unable to Assign User"
-          addTask msg, taskName, '/tasks', params, false
+      if userId = robot.brain.get('todo_user_mapping')?[userAcct]
+        params = {data:{name: "#{taskName}", workspace: "#{workspace}", assignee: "#{userId}"}}
+        addTask msg, taskName, '/tasks', params, userAcct
+      else
+        msg.send "Can't assign task to #{userAcct}, not found in my brain"
+        msg.send " (you must first '@hubot todo alias <ASANA_ID> @user)"
+        msg.send " (you can find their asana id with @hubot todo users)"
     else
       addTask msg, taskName, '/tasks', params, false
 
@@ -82,3 +75,11 @@ module.exports = (robot) ->
         userList += "#{user.id} : #{user.name}\n"
 
       msg.send userList
+
+  robot.respond /todo alias \s?(\w+)?(.*)/i, (msg) ->
+    id = msg.match[1].trim()
+    code = msg.match[2].trim()
+    todo_user_mapping = robot.brain.get('todo_user_mapping') || {}
+    todo_user_mapping[code] = id
+    robot.brain.set('todo_user_mapping', todo_user_mapping)
+    msg.send "mapped short code #{code} to #{id}"
